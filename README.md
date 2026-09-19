@@ -34,15 +34,17 @@ dotnet build
 
 ```bash
 dotnet run -- 1000
+# Or specify a custom config file:
+dotnet run -- --config my_config.json
 ```
 
-The first argument is the number of bots to launch.
+The first argument can be the number of bots to launch (overrides config).
 
-## Current Default Configuration
+## Configuration
 
-The main runtime settings are defined in [BotConfig.cs](./BotConfig.cs).
+Settings can be edited directly in [config.json](./config.json) without recompiling. If `config.json` is missing, the application will automatically generate one with default values.
 
-Important defaults:
+Important settings:
 
 - Host: `127.0.0.1`
 - Port: `7172`
@@ -71,8 +73,9 @@ Important defaults:
 
 ## Project Structure
 
+- [config.json](./config.json) - benchmark runtime configuration
 - [Program.cs](./Program.cs) - startup, bot launching, live dashboard
-- [BotConfig.cs](./BotConfig.cs) - benchmark configuration
+- [BotConfig.cs](./BotConfig.cs) - configuration model and JSON loader
 - [TibiaBot.cs](./TibiaBot.cs) - per-bot connection lifecycle and behavior
 - [BotMetrics.cs](./BotMetrics.cs) - shared counters and performance telemetry
 - [Network/InputMessage.cs](./Network/InputMessage.cs) - packet reading helpers

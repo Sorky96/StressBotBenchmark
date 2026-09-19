@@ -1,3 +1,7 @@
+using System;
+using System.IO;
+using System.Text.Json;
+
 namespace StressBotBenchmark
 {
     public class BotConfig
@@ -37,5 +41,48 @@ namespace StressBotBenchmark
         
         public int QueueSize { get; set; } = 32;
         public int MaxSendLagMsToDrop { get; set; } = 1200;
+
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        };
+
+        public static BotConfig Load(string path = "config.json")
+        {
+            if (!File.Exists(path))
+            {
+                var defaultConfig = new BotConfig();
+                defaultConfig.Save(path);
+                return defaultConfig;
+            }
+
+            try
+            {
+                string json = File.ReadAllText(path);
+                var config = JsonSerializer.Deserialize<BotConfig>(json, JsonOptions);
+                return config ?? new BotConfig();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Config] Failed to load '{path}': {ex.Message}. Using default configuration.");
+                return new BotConfig();
+            }
+        }
+
+        public void Save(string path = "config.json")
+        {
+            try
+            {
+                string json = JsonSerializer.Serialize(this, JsonOptions);
+                File.WriteAllText(path, json);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Config] Failed to save '{path}': {ex.Message}");
+            }
+        }
     }
 }

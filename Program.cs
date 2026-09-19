@@ -14,8 +14,16 @@ namespace StressBotBenchmark
             Console.WriteLine("    StressBotBenchmark (C# Rewrite)");
             Console.WriteLine("========================================");
 
-            var config = new BotConfig();
-            // In a real scenario, use args to populate `config`
+            string configPath = "config.json";
+            for (int i = 0; i < args.Length; i++)
+            {
+                if ((args[i] == "--config" || args[i] == "-c") && i + 1 < args.Length)
+                {
+                    configPath = args[i + 1];
+                }
+            }
+
+            var config = BotConfig.Load(configPath);
             if (args.Length >= 1 && int.TryParse(args[0], out int count))
                 config.BotCount = count;
 
