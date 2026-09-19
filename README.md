@@ -7,7 +7,7 @@ The current implementation is tailored to a Tibia-like protocol stack and is tig
 - the Tibia 10.98 login/game protocol flow,
 - RSA and XTEA packet handling,
 - Tibia-specific opcodes for login, chat, spells, walking, attack, and ping responses,
-- an HTTP login API used before opening the game socket.
+- an optional HTTP login API (disabled by default) when connecting to servers that require web auth.
 
 ## Features
 
@@ -46,6 +46,7 @@ Important defaults:
 
 - Host: `127.0.0.1`
 - Port: `7172`
+- Use API login: `false`
 - API login URL: `http://127.0.0.1:5185/auth/login`
 - Bot count: `1000`
 - Account prefix: `stressbot`
@@ -62,8 +63,8 @@ Important defaults:
 ## How It Works
 
 1. The application creates bot names based on the configured prefix and numeric suffix.
-2. Each bot performs an HTTP login request through `ApiLoginAsync`.
-3. If the API login succeeds, the bot opens a TCP connection to the game server.
+2. If `UseApiLogin` is enabled, each bot performs an HTTP login request through `ApiLoginAsync`.
+3. The bot opens a TCP connection to the game server (port 7172 by default).
 4. The bot completes the protocol handshake, sends the login packet, and starts its read/write loops.
 5. Optional behavior loops send movement, spell, chat, and attack packets.
 6. A Spectre.Console dashboard displays real-time benchmark statistics.
