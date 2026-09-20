@@ -4,6 +4,7 @@ namespace StressBotBenchmark
     {
         public string Host { get; set; } = "127.0.0.1";
         public int Port { get; set; } = 7172;
+        public bool UseApiLogin { get; set; } = false;
         public string ApiLoginUrl { get; set; } = "http://127.0.0.1:5185/auth/login";
         
         public int BotCount { get; set; } = 1000;

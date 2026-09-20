@@ -53,12 +53,15 @@ namespace StressBotBenchmark
                 _cts = new CancellationTokenSource();
                 try
                 {
-                    bool loggedIn = await ApiLoginAsync(_cts.Token);
-                    if (!loggedIn)
+                    if (_config.UseApiLogin)
                     {
-                        if (!_config.Reconnect) break;
-                        try { await Task.Delay(3000, _cts.Token); } catch { break; }
-                        continue;
+                        bool loggedIn = await ApiLoginAsync(_cts.Token);
+                        if (!loggedIn)
+                        {
+                            if (!_config.Reconnect) break;
+                            try { await Task.Delay(3000, _cts.Token); } catch { break; }
+                            continue;
+                        }
                     }
                     await ConnectAndRunAsync(_cts.Token);
                 }
@@ -187,7 +190,7 @@ namespace StressBotBenchmark
             byte[] body = new byte[size];
             read = 0;
             while(read < size) {
-                int r = await _stream.ReadAsync(body, read, size - read, token);
+                int r = await _stream!.ReadAsync(body, read, size - read, token);
                 if (r == 0) throw new EndOfStreamException();
                 read += r;
             }
