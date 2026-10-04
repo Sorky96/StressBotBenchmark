@@ -30,6 +30,19 @@ The current implementation is tailored to a Tibia-like protocol stack and is tig
 dotnet build
 ```
 
+## Releases
+
+Ready-to-run, self-contained builds (no .NET runtime needed) are published on the [Releases](../../releases) page for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64` and `osx-arm64`. Each archive contains the executable, `config.json`, `README.md` and `seed_accounts.sql`, and the release includes a `SHA256SUMS.txt` file.
+
+Releases are built by [.github/workflows/release.yml](./.github/workflows/release.yml). To create one, either push a version tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+or run the **Release** workflow manually from the Actions tab and enter the tag (e.g. `v1.0.0`). Tags with a suffix such as `v1.1.0-beta.1` are marked as pre-releases.
+
 ## Run
 
 ```bash

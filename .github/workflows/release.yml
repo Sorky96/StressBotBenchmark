@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create (e.g. v1.0.0)'
+        required: true
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  PROJECT: StressBotBenchmark.csproj
+  APP_NAME: StressBotBenchmark
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        rid: [win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid version (expected vX.Y.Z)"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        run: >
+          dotnet publish "$PROJECT"
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:Version=${{ steps.version.outputs.version }}
+          -o publish/${{ matrix.rid }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          RID="${{ matrix.rid }}"
+          PKG="${APP_NAME}-${{ steps.version.outputs.tag }}-${RID}"
+          STAGE="dist/$PKG"
+          mkdir -p "$STAGE"
+          cp -r "publish/$RID/." "$STAGE/"
+          cp config.json README.md seed_accounts.sql "$STAGE/"
+          cd dist
+          if [[ "$RID" == win-* ]]; then
+            ARCHIVE="$PKG.zip"
+            zip -qr "$ARCHIVE" "$PKG"
+          else
+            chmod +x "$PKG/$APP_NAME"
+            ARCHIVE="$PKG.tar.gz"
+            tar -czf "$ARCHIVE" "$PKG"
+          fi
+          echo "archive=dist/$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Prepare release info
+        id: info
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # On manual runs the tag does not exist yet - use the current commit.
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then REF="$TAG"; else REF="HEAD"; fi
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' "$REF^" 2>/dev/null || true)
+          {
+            echo "## StressBotBenchmark $TAG"
+            echo
+            echo "Self-contained builds - no .NET runtime installation required."
+            echo
+            echo "### Downloads"
+            echo
+            echo "| Platform | Package |"
+            echo "|---|---|"
+            for f in dist/*.zip dist/*.tar.gz; do
+              [ -e "$f" ] || continue
+              name=$(basename "$f")
+              rid=$(echo "$name" | sed -E "s/^${APP_NAME}-${TAG}-(.*)\.(zip|tar\.gz)$/\1/")
+              echo "| \`$rid\` | [$name](https://github.com/$REPO/releases/download/$TAG/$name) |"
+            done
+            echo
+            echo "Each package contains the executable, \`config.json\`, \`README.md\` and \`seed_accounts.sql\`."
+            echo "Verify downloads with \`SHA256SUMS.txt\`."
+            echo
+            echo "### Usage"
+            echo
+            echo '```bash'
+            echo "./${APP_NAME} --config config.json --bots 500"
+            echo '```'
+            if [ -n "$PREV" ]; then
+              echo
+              echo "### Commits since $PREV"
+              echo
+              git log --no-merges --pretty='- %s (%h)' "$PREV..$REF"
+            fi
+          } > release_notes.md
+          cat release_notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.info.outputs.tag }}
+          name: StressBotBenchmark ${{ steps.info.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: release_notes.md
+          generate_release_notes: true
+          prerelease: ${{ github.event.inputs.prerelease == 'true' || contains(steps.info.outputs.tag, '-') }}
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
