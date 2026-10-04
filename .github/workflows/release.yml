@@ -90,13 +90,15 @@ jobs:
           fi
 
           VERSION="${TAG#v}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::'$TAG' is not a valid version (expected vX.Y.Z or vX.Y.Z-suffix)"
+          # SemVer: X.Y.Z, optional -prerelease, optional +build metadata.
+          SEMVER='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if [[ ! "$VERSION" =~ $SEMVER ]]; then
+            echo "::error::'$TAG' is not a valid version (expected vX.Y.Z[-prerelease][+build])"
             exit 1
           fi
 
           PRERELEASE=false
-          if [[ "$PRERELEASE_INPUT" == "true" || "$VERSION" == *-* ]]; then PRERELEASE=true; fi
+          if [[ "$PRERELEASE_INPUT" == "true" || -n "${BASH_REMATCH[1]}" ]]; then PRERELEASE=true; fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
