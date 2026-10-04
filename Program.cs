@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Spectre.Console;
@@ -14,18 +15,25 @@ namespace StressBotBenchmark
             Console.WriteLine("    StressBotBenchmark (C# Rewrite)");
             Console.WriteLine("========================================");
 
-            string configPath = "config.json";
-            for (int i = 0; i < args.Length; i++)
+            BotConfig config;
+            try
             {
-                if ((args[i] == "--config" || args[i] == "-c") && i + 1 < args.Length)
-                {
-                    configPath = args[i + 1];
-                }
+                var (configPath, botCount) = ParseArgs(args);
+                config = BotConfig.Load(configPath);
+                if (botCount.HasValue)
+                    config.BotCount = botCount.Value;
+            }
+            catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException)
+            {
+                Console.Error.WriteLine($"[Error] {ex.Message}");
+                Console.Error.WriteLine("Usage: StressBotBenchmark [botCount] [--bots N] [--config|-c path]");
+                Environment.ExitCode = 2;
+                return;
             }
 
-            var config = BotConfig.Load(configPath);
-            if (args.Length >= 1 && int.TryParse(args[0], out int count))
-                config.BotCount = count;
+            Console.WriteLine(config.UseApiLogin
+                ? $"HTTP API login: enabled ({config.ApiLoginUrl})"
+                : "HTTP API login: disabled (set UseApiLogin=true in config.json if your server requires it)");
 
             var metrics = new BotMetrics();
             var bots = new List<TibiaBot>();
@@ -36,6 +44,50 @@ namespace StressBotBenchmark
             var dashTask = DashboardLoopAsync(config, metrics, bots);
 
             await Task.WhenAll(burstTask, dashTask);
+        }
+
+        static (string? ConfigPath, int? BotCount) ParseArgs(string[] args)
+        {
+            string? configPath = null;
+            int? botCount = null;
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (arg == "--config" || arg == "-c")
+                {
+                    if (i + 1 >= args.Length) throw new ArgumentException($"Missing value for '{arg}'.");
+                    configPath = args[++i];
+                }
+                else if (arg.StartsWith("--config="))
+                {
+                    configPath = arg["--config=".Length..];
+                }
+                else if (arg == "--bots")
+                {
+                    if (i + 1 >= args.Length) throw new ArgumentException("Missing value for '--bots'.");
+                    botCount = ParseBotCount(args[++i]);
+                }
+                else if (arg.StartsWith("--bots="))
+                {
+                    botCount = ParseBotCount(arg["--bots=".Length..]);
+                }
+                else if (!arg.StartsWith("-") && botCount == null)
+                {
+                    botCount = ParseBotCount(arg);
+                }
+                else
+                {
+                    throw new ArgumentException($"Unknown argument '{arg}'.");
+                }
+            }
+            return (configPath, botCount);
+        }
+
+        static int ParseBotCount(string value)
+        {
+            if (!int.TryParse(value, out int count) || count < 1)
+                throw new ArgumentException($"Invalid bot count '{value}', expected a positive integer.");
+            return count;
         }
 
         static async Task LaunchBotsAsync(BotConfig config, BotMetrics metrics, List<TibiaBot> bots)

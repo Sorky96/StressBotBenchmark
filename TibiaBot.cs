@@ -90,7 +90,7 @@ namespace StressBotBenchmark
 
         private async Task<bool> ApiLoginAsync(CancellationToken token)
         {
-            string payload = $"{{\"emailOrUsername\":\"{_name}\",\"password\":\"{_password}\"}}";
+            string payload = System.Text.Json.JsonSerializer.Serialize(new { emailOrUsername = _name, password = _password });
             var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
             try
             {
