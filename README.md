@@ -34,15 +34,18 @@ dotnet build
 
 ```bash
 dotnet run -- 1000
-# Or specify a custom config file:
-dotnet run -- --config my_config.json
+# Or specify a custom config file (and optionally override the bot count):
+dotnet run -- --config my_config.json --bots 500
 ```
 
-The first argument can be the number of bots to launch (overrides config).
+Arguments:
+
+- `N` or `--bots N` / `--bots=N` - number of bots to launch (overrides config),
+- `--config path` / `-c path` / `--config=path` - config file to load. The file must exist; a missing or invalid file stops the program with exit code 2.
 
 ## Configuration
 
-Settings can be edited directly in [config.json](./config.json) without recompiling. If `config.json` is missing, the application will automatically generate one with default values.
+Settings can be edited directly in [config.json](./config.json) without recompiling. Without `--config`, `config.json` is looked up in the working directory and then next to the executable. If it is not found in either place, the application generates one with default values in the working directory. A config file that cannot be parsed stops the program instead of silently falling back to defaults.
 
 Important settings:
 

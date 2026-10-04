@@ -50,29 +50,65 @@ namespace StressBotBenchmark
             AllowTrailingCommas = true
         };
 
-        public static BotConfig Load(string path = "config.json")
+        public const string DefaultFileName = "config.json";
+
+        /// <summary>
+        /// Loads the configuration. An explicitly requested path must exist; without one,
+        /// config.json is looked up in the working directory and next to the executable,
+        /// and a default file is generated in the working directory if neither exists.
+        /// Throws on a missing explicit file or an unreadable/invalid file.
+        /// </summary>
+        public static BotConfig Load(string? explicitPath = null)
         {
-            if (!File.Exists(path))
+            string path;
+            if (explicitPath != null)
             {
-                var defaultConfig = new BotConfig();
-                defaultConfig.Save(path);
-                return defaultConfig;
+                path = explicitPath;
+                if (!File.Exists(path))
+                    throw new FileNotFoundException($"Config file '{Path.GetFullPath(path)}' does not exist.", path);
+            }
+            else
+            {
+                string? found = FindDefaultConfig();
+                if (found == null)
+                {
+                    var defaultConfig = new BotConfig();
+                    defaultConfig.Save(DefaultFileName);
+                    Console.WriteLine($"[Config] '{DefaultFileName}' not found, generated one with default values.");
+                    return defaultConfig;
+                }
+                path = found;
             }
 
             try
             {
                 string json = File.ReadAllText(path);
-                var config = JsonSerializer.Deserialize<BotConfig>(json, JsonOptions);
-                return config ?? new BotConfig();
+                var config = JsonSerializer.Deserialize<BotConfig>(json, JsonOptions)
+                             ?? throw new InvalidDataException("file contains 'null'");
+                Console.WriteLine($"[Config] Loaded '{Path.GetFullPath(path)}'.");
+                return config;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                Console.WriteLine($"[Config] Failed to load '{path}': {ex.Message}. Using default configuration.");
-                return new BotConfig();
+                throw new InvalidDataException($"Failed to load config '{Path.GetFullPath(path)}': {ex.Message}", ex);
             }
         }
 
-        public void Save(string path = "config.json")
+        private static string? FindDefaultConfig()
+        {
+            string[] candidates =
+            {
+                Path.Combine(Directory.GetCurrentDirectory(), DefaultFileName),
+                Path.Combine(AppContext.BaseDirectory, DefaultFileName)
+            };
+            foreach (string candidate in candidates)
+            {
+                if (File.Exists(candidate)) return candidate;
+            }
+            return null;
+        }
+
+        public void Save(string path = DefaultFileName)
         {
             try
             {
