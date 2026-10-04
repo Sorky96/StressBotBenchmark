@@ -1,0 +1,251 @@
+name: Release
+
+on:
+  # Manual release from master: Actions -> Release -> Run workflow.
+  # The next version is calculated from the latest vX.Y.Z tag, the tag is
+  # created automatically after a successful build.
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (ignored when "version" is set)'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: 'Explicit version, e.g. 1.0.0 (optional)'
+        required: false
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+  # Pushing a tag manually still works as well.
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  PROJECT: StressBotBenchmark.csproj
+  APP_NAME: StressBotBenchmark
+
+jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BUMP: ${{ github.event.inputs.bump }}
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+          PRERELEASE_INPUT: ${{ github.event.inputs.prerelease }}
+        run: |
+          if [[ "$EVENT" == "push" ]]; then
+            TAG="$REF_NAME"
+          else
+            if [[ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+              echo "::error::Releases can only be created from '$DEFAULT_BRANCH' (got '$REF')"
+              exit 1
+            fi
+            if [[ -n "$VERSION_INPUT" ]]; then
+              TAG="v${VERSION_INPUT#v}"
+            else
+              LAST=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+              LAST="${LAST:-v0.0.0}"
+              IFS=. read -r MAJOR MINOR PATCH <<< "${LAST#v}"
+              case "$BUMP" in
+                major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+                *)     PATCH=$((PATCH + 1)) ;;
+              esac
+              TAG="v$MAJOR.$MINOR.$PATCH"
+              echo "Latest release tag: $LAST -> next: $TAG ($BUMP)"
+            fi
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "::error::Tag $TAG already exists"
+              exit 1
+            fi
+          fi
+
+          VERSION="${TAG#v}"
+          # SemVer: X.Y.Z, optional -prerelease, optional +build metadata.
+          SEMVER='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if [[ ! "$VERSION" =~ $SEMVER ]]; then
+            echo "::error::'$TAG' is not a valid version (expected vX.Y.Z[-prerelease][+build])"
+            exit 1
+          fi
+
+          PRERELEASE=false
+          if [[ "$PRERELEASE_INPUT" == "true" || -n "${BASH_REMATCH[1]}" ]]; then PRERELEASE=true; fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "### Releasing $TAG (prerelease: $PRERELEASE)" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        rid: [win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish
+        run: >
+          dotnet publish "$PROJECT"
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -o publish/${{ matrix.rid }}
+
+      - name: Package
+        id: package
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          PKG="${APP_NAME}-${TAG}-${RID}"
+          STAGE="dist/$PKG"
+          mkdir -p "$STAGE"
+          cp -r "publish/$RID/." "$STAGE/"
+          cp config.json README.md seed_accounts.sql "$STAGE/"
+          cd dist
+          if [[ "$RID" == win-* ]]; then
+            ARCHIVE="$PKG.zip"
+            zip -qr "$ARCHIVE" "$PKG"
+          else
+            chmod +x "$PKG/$APP_NAME"
+            ARCHIVE="$PKG.tar.gz"
+            tar -czf "$ARCHIVE" "$PKG"
+          fi
+          echo "archive=dist/$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Tag and publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      # Tag is created only after all builds succeeded, so a failed run
+      # never leaves an orphaned tag behind.
+      - name: Create tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+
+      - name: Prepare release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
+          {
+            echo "## StressBotBenchmark $TAG"
+            echo
+            echo "Self-contained builds - no .NET runtime installation required."
+            echo
+            echo "### Downloads"
+            echo
+            echo "| Platform | Package |"
+            echo "|---|---|"
+            for f in dist/*.zip dist/*.tar.gz; do
+              [ -e "$f" ] || continue
+              name=$(basename "$f")
+              rid=$(echo "$name" | sed -E "s/^${APP_NAME}-${TAG}-(.*)\.(zip|tar\.gz)$/\1/")
+              echo "| \`$rid\` | [$name](https://github.com/$REPO/releases/download/$TAG/$name) |"
+            done
+            echo
+            echo "Each package contains the executable, \`config.json\`, \`README.md\` and \`seed_accounts.sql\`."
+            echo "Verify downloads with \`SHA256SUMS.txt\`."
+            echo
+            echo "### Usage"
+            echo
+            echo '```bash'
+            echo "./${APP_NAME} --config config.json --bots 500"
+            echo '```'
+            echo
+            if [ -n "$PREV" ]; then
+              echo "### Commits since $PREV"
+              echo
+              git log --no-merges --pretty='- %s (%h)' "$PREV..$TAG"
+            else
+              echo "### Commits"
+              echo
+              git log --no-merges --pretty='- %s (%h)' "$TAG"
+            fi
+          } > release_notes.md
+          cat release_notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: StressBotBenchmark ${{ needs.prepare.outputs.tag }}
+          body_path: release_notes.md
+          generate_release_notes: true
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
